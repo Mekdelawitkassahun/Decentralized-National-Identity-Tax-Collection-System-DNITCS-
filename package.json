@@ -1,0 +1,14 @@
+{
+  "name": "tax-collection-monorepo",
+  "private": true,
+  "scripts": {
+    "contracts:install": "cd contracts && npm install",
+    "frontend:install": "cd dnit-frontend && npm install",
+    "install-all": "npm run contracts:install && npm run frontend:install",
+    "contracts:node": "cd contracts && npx hardhat node",
+    "contracts:deploy": "cd contracts && npx hardhat run scripts/deploy.cjs --network localhost",
+    "frontend:dev": "cd dnit-frontend && npm run dev",
+    "frontend:build": "cd dnit-frontend && npm run build",
+    "build": "npm run frontend:build"
+  }
+}
