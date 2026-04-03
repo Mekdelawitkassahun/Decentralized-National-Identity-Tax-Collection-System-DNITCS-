@@ -1,193 +1,215 @@
-import React, { useState } from 'react';
-import useWallet from '../hooks/useWallet';
-import { Search, Landmark, FileText, CheckCircle2, XCircle, Clock, ShieldCheck } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
 import { ethers } from 'ethers';
+import useWallet from '../hooks/useWallet';
+import {
+  Search,
+  Landmark,
+  ShieldCheck,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  FileText,
+  ScanFace,
+} from 'lucide-react';
 
 const TaxCollectorPortal = () => {
-  const { nationalIdentityContract, staticTaxHandlerContract, loading } = useWallet();
-  const [searchAddress, setSearchAddress] = useState('');
-  const [citizenData, setCitizenData] = useState<any>(null);
-  const [taxData, setTaxData] = useState<any>(null);
+  const { isTaxCollector, loading, nationalIdentityContract, staticTaxHandlerContract } = useWallet();
+  const [query, setQuery] = useState('');
+  const [resolvedWallet, setResolvedWallet] = useState<string>('');
+  const [citizen, setCitizen] = useState<any>(null);
+  const [taxRecord, setTaxRecord] = useState<any>(null);
   const [isSearching, setIsSearching] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<string>('');
+
+  const taxCatLabel = (cat: number) => {
+    if (cat === 0) return 'Government';
+    if (cat === 1) return 'Category A';
+    if (cat === 2) return 'Category B';
+    return 'Micro';
+  };
+
+  const compliance = useMemo(() => {
+    if (!citizen) return null;
+    const autoApproved = !!citizen.isAutoApproved;
+    const verified = !!citizen.isFaydaVerified;
+    const recordExists = !!taxRecord?.exists;
+    if (!verified || !autoApproved) {
+      return { label: 'Incomplete Verification', color: 'text-yellow-500', icon: <Clock className="w-5 h-5" /> };
+    }
+    if (!recordExists || (taxRecord?.totalTaxPaid ?? 0n) <= 0n) {
+      return { label: 'Non-Compliant', color: 'text-red-500', icon: <XCircle className="w-5 h-5" /> };
+    }
+    return { label: 'Tax Compliant', color: 'text-green-500', icon: <CheckCircle2 className="w-5 h-5" /> };
+  }, [citizen, taxRecord]);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!ethers.isAddress(searchAddress)) {
-      setError('Invalid Ethereum address format');
-      return;
-    }
+    setError('');
+    setResolvedWallet('');
+    setCitizen(null);
+    setTaxRecord(null);
+
+    if (!nationalIdentityContract || !staticTaxHandlerContract) return;
+    if (!query.trim()) return;
 
     setIsSearching(true);
-    setError('');
-    setCitizenData(null);
-    setTaxData(null);
-
     try {
-      if (nationalIdentityContract && staticTaxHandlerContract) {
-        // Fetch Identity Data
-        const citizen = await nationalIdentityContract.citizens(searchAddress);
-        const regTime = citizen.registrationTime !== undefined ? citizen.registrationTime : citizen[4];
-        
-        if (Number(regTime) === 0) {
-          setError('No identity record found for this address.');
-        } else {
-          // Handle ethers v6 struct return for citizen
-          setCitizenData({
-            fullName: citizen.fullName || citizen[0],
-            faydaHash: citizen.faydaHash || citizen[1],
-            isFaydaVerified: citizen.isFaydaVerified !== undefined ? citizen.isFaydaVerified : citizen[2],
-            isVerifiedByAdmin: citizen.isVerifiedByAdmin !== undefined ? citizen.isVerifiedByAdmin : citizen[3],
-            registrationTime: regTime
-          });
-          
-          // Fetch Tax Data
-          const record = await staticTaxHandlerContract.taxRecords(searchAddress);
-          const recordExists = record.exists !== undefined ? record.exists : record[3];
-          
-          if (recordExists) {
-            setTaxData({
-              exists: true,
-              totalIncome: record.totalIncome !== undefined ? record.totalIncome : record[0],
-              totalTaxPaid: record.totalTaxPaid !== undefined ? record.totalTaxPaid : record[1],
-              lastFilingDate: record.lastFilingDate !== undefined ? record.lastFilingDate : record[2]
-            });
-          } else {
-            setTaxData({ exists: false, totalTaxPaid: 0n, totalIncome: 0n });
-          }
-        }
+      let wallet = '';
+
+      const trimmed = query.trim();
+      if (/^\d{16}$/.test(trimmed)) {
+        wallet = await nationalIdentityContract.resolveWalletFromFaydaNumber(BigInt(trimmed));
+      } else {
+        if (!ethers.isAddress(trimmed)) throw new Error('Enter a wallet address (0x...) or 16-digit Fayda ID.');
+        wallet = ethers.getAddress(trimmed);
       }
-    } catch (err) {
-      console.error('Search error:', err);
-      setError('An error occurred during verification.');
+
+      const c = await nationalIdentityContract.getCitizenPublic(wallet);
+      const [
+        taxCategory,
+        isFaydaVerified,
+        isAutoApproved,
+        needsManualReview,
+        approvalTimestamp,
+        registrationTime,
+      ] = c;
+
+      setCitizen({
+        wallet,
+        taxCategory: Number(taxCategory),
+        isFaydaVerified: !!isFaydaVerified,
+        isAutoApproved: !!isAutoApproved,
+        needsManualReview: !!needsManualReview,
+        approvalTimestamp,
+        registrationTime,
+      });
+
+      const record = await staticTaxHandlerContract.getTaxRecord(wallet);
+      const [exists, totalTaxPaid, lastPaymentTimestamp] = record;
+      setTaxRecord({
+        exists,
+        totalTaxPaid,
+        lastPaymentTimestamp,
+      });
+
+      setResolvedWallet(wallet);
+    } catch (err: any) {
+      setError(err?.message || 'Search failed');
     } finally {
       setIsSearching(false);
     }
   };
 
-  const getComplianceStatus = () => {
-    if (!citizenData) return null;
-    if (!citizenData.isFaydaVerified || !citizenData.isVerifiedByAdmin) {
-      return { label: 'Incomplete Verification', color: 'text-yellow-500', icon: <Clock className="w-5 h-5" /> };
-    }
-    if (!taxData || !taxData.exists) return { label: 'Non-Compliant', color: 'text-red-500', icon: <XCircle className="w-5 h-5" /> };
-    return { label: 'Tax Compliant', color: 'text-green-500', icon: <CheckCircle2 className="w-5 h-5" /> };
-  };
-
-  const status = getComplianceStatus();
+  if (loading) return <div className="p-8 text-white">Loading Tax Collector Portal...</div>;
+  if (!isTaxCollector) {
+    return (
+      <div className="min-h-screen bg-[#0a0f1d] flex flex-col items-center justify-center p-8 text-center">
+        <div className="bg-red-500/10 border border-red-500/20 p-12 rounded-3xl max-w-md">
+          <ShieldCheck className="w-16 h-16 text-red-500 mx-auto mb-6" />
+          <h1 className="text-3xl font-bold text-white mb-4">Access Denied</h1>
+          <p className="text-government-400 mb-8">Your account is not registered as an authorized Tax Collector.</p>
+          <button
+            onClick={() => window.history.back()}
+            className="px-8 py-3 bg-government-800 hover:bg-government-700 text-white rounded-xl font-bold transition-all"
+          >
+            Go Back
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-[#0a0f1d] text-white p-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex items-center gap-4 mb-12">
-          <div className="p-3 bg-ethiopia-yellow/20 rounded-2xl">
-            <Landmark className="w-8 h-8 text-ethiopia-yellow" />
-          </div>
-          <div>
-            <h1 className="text-4xl font-bold text-white">Tax Collector Portal</h1>
-            <p className="text-government-400">Official Payment Verification & Compliance Interface</p>
+    <div className="min-h-screen bg-[#0a0f1d] text-white p-6 sm:p-8">
+      <div className="max-w-5xl mx-auto">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-ethiopia-yellow/20 rounded-2xl">
+              <Landmark className="w-7 h-7 text-ethiopia-yellow" />
+            </div>
+            <div>
+              <h1 className="text-3xl sm:text-4xl font-bold">Tax Collector Portal</h1>
+              <p className="text-government-400">Search citizens and verify compliance status.</p>
+            </div>
           </div>
         </div>
 
-        {/* Search Section */}
-        <div className="bg-government-900/40 p-8 rounded-3xl border border-government-800 backdrop-blur-xl mb-8">
-          <form onSubmit={handleSearch} className="flex gap-4">
+        <div className="bg-government-900/40 p-7 rounded-3xl border border-government-800 backdrop-blur-xl mb-8">
+          <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-government-500 w-5 h-5" />
-              <input 
+              <input
                 type="text"
-                placeholder="Enter Citizen Wallet Address (0x...)"
-                value={searchAddress}
-                onChange={(e) => setSearchAddress(e.target.value)}
-                className="w-full p-4 bg-government-800/50 rounded-xl border border-government-700 focus:ring-2 focus:ring-ethiopia-yellow focus:outline-none transition-all pl-12"
+                placeholder="Wallet address (0x...) or 16-digit Fayda ID"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="w-full p-4 bg-government-800/50 rounded-xl border border-government-700 focus:ring-2 focus:ring-ethiopia-yellow focus:outline-none transition-all pl-12 font-mono"
               />
             </div>
-            <button 
+            <button
               type="submit"
-              disabled={isSearching || !searchAddress}
-              className="px-8 py-4 bg-ethiopia-yellow hover:bg-yellow-600 disabled:opacity-50 text-government-950 font-bold rounded-xl transition-all shadow-lg shadow-yellow-900/20"
+              disabled={isSearching || !query.trim()}
+              className="sm:w-44 px-8 py-4 bg-ethiopia-yellow hover:bg-yellow-600 disabled:opacity-50 text-government-950 font-bold rounded-xl transition-all shadow-lg shadow-yellow-900/20 flex items-center justify-center gap-2"
             >
               {isSearching ? 'Verifying...' : 'Verify Citizen'}
+              <ScanFace className="w-4 h-4" />
             </button>
           </form>
           {error && <p className="mt-4 text-red-500 text-sm font-medium">{error}</p>}
         </div>
 
-        {/* Results Section */}
-        {citizenData && (
+        {citizen && (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Identity Info */}
-              <div className="md:col-span-2 bg-government-900/40 p-8 rounded-3xl border border-government-800">
-                <div className="flex justify-between items-start mb-6">
-                  <div>
-                    <h3 className="text-sm font-bold text-government-500 uppercase tracking-widest mb-1">Citizen Details</h3>
-                    <p className="text-2xl font-bold">{citizenData.fullName}</p>
-                    <p className="text-xs text-government-500 font-mono mt-1">{searchAddress}</p>
-                  </div>
-                  {status && (
-                    <div className={`flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/10 ${status.color}`}>
-                      {status.icon}
-                      <span className="text-sm font-bold uppercase">{status.label}</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-2 gap-8 py-6 border-t border-government-800">
-                  <div>
-                    <p className="text-xs text-government-500 uppercase font-bold mb-1">Registration Date</p>
-                    <p className="font-medium">{new Date(Number(citizenData.registrationTime) * 1000).toLocaleDateString()}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-government-500 uppercase font-bold mb-1">Fayda ID Hash</p>
-                    <p className="font-mono text-xs text-government-400">{citizenData.faydaHash.substring(0, 20)}...</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Quick Summary */}
-              <div className="bg-government-900/40 p-8 rounded-3xl border border-government-800 flex flex-col justify-between">
+            <div className="bg-government-900/40 p-7 rounded-3xl border border-government-800">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 mb-6">
                 <div>
-                  <h3 className="text-sm font-bold text-government-500 uppercase tracking-widest mb-4">Total Contribution</h3>
-                  <div className="flex items-center gap-3">
-                    <FileText className="w-10 h-10 text-ethiopia-yellow" />
-                    <div>
-                      <p className="text-3xl font-black text-white">Ξ {taxData?.exists ? ethers.formatEther(taxData.totalTaxPaid) : '0.00'}</p>
-                      <p className="text-xs text-government-500">Lifetime Tax Paid</p>
-                    </div>
-                  </div>
+                  <h3 className="text-sm font-bold text-government-500 uppercase tracking-widest mb-2">Citizen</h3>
+                  <p className="text-2xl font-bold">{resolvedWallet.slice(0, 14)}...</p>
+                  <p className="text-xs text-government-500 font-mono mt-1">{resolvedWallet}</p>
                 </div>
-                
-                <button 
-                  className="mt-8 w-full py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
-                  onClick={() => window.print()}
-                >
-                  <ShieldCheck className="w-4 h-4" />
-                  Issue Certificate
-                </button>
-              </div>
-            </div>
-
-            {/* Detailed Tax History Placeholder */}
-            <div className="bg-government-900/40 p-8 rounded-3xl border border-government-800">
-              <h3 className="text-xl font-bold mb-6">Declaration History</h3>
-              <div className="space-y-4">
-                {taxData?.exists ? (
-                  <div className="flex justify-between items-center p-4 bg-government-800/30 rounded-xl border border-government-700">
-                    <div>
-                      <p className="text-sm text-government-400">Last Payment Date</p>
-                      <p className="font-bold">{new Date(Number(taxData.lastFilingDate) * 1000).toLocaleString()}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm text-government-400">Income Declared</p>
-                      <p className="font-bold text-ethiopia-blue">Ξ {ethers.formatEther(taxData.totalIncome)}</p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-center py-8 text-government-500">
-                    No payment records found for this verified identity.
+                {compliance && (
+                  <div className={`flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/10 ${compliance.color}`}>
+                    {compliance.icon}
+                    <span className="text-sm font-bold uppercase">{compliance.label}</span>
                   </div>
                 )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-6 py-4 border-t border-government-800">
+                <div>
+                  <p className="text-xs text-government-500 uppercase font-bold mb-1">Category</p>
+                  <p className="font-medium">{taxCatLabel(citizen.taxCategory)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-government-500 uppercase font-bold mb-1">Status</p>
+                  <p className="font-medium">
+                    {citizen.isAutoApproved ? 'Auto-approved' : citizen.needsManualReview ? 'Manual review' : 'Pending'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6 bg-government-800/30 p-5 rounded-2xl border border-government-700">
+                <div className="flex items-center gap-3">
+                  <FileText className="w-6 h-6 text-ethiopia-yellow" />
+                  <div>
+                    <p className="text-xs text-government-500 uppercase tracking-widest font-bold">Payments</p>
+                    <p className="text-3xl font-black text-white mt-1">
+                      Ξ {ethers.formatEther(taxRecord?.totalTaxPaid ?? 0n)}
+                    </p>
+                    <p className="text-xs text-government-500 mt-1">
+                      Last payment: {taxRecord?.exists ? new Date(Number(taxRecord.lastPaymentTimestamp) * 1000).toLocaleDateString() : 'N/A'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex gap-3">
+                  <button
+                    className="mt-2 flex-1 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2"
+                    onClick={() => window.print()}
+                  >
+                    Issue Certificate
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -198,3 +220,4 @@ const TaxCollectorPortal = () => {
 };
 
 export default TaxCollectorPortal;
+

@@ -1,0 +1,6 @@
+flask
+flask-cors
+fayda-python-sdk
+web3
+eth-account
+requests

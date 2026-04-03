@@ -7,6 +7,11 @@ async function main() {
 
   console.log("Deploying contracts with the account:", deployer.address);
 
+  // Role addresses (prototype constants). You can override via env vars.
+  const ADMIN_WALLET = process.env.DNIT_ADMIN_WALLET || "0x2646C40E21f8ef7637e3cD7AB6e33730Fba3C1A5";
+  const EMPLOYER_WALLET = process.env.DNIT_EMPLOYER_WALLET || "0x2d06fb81C36D325c26E90a485598aA5f2d05B3dB";
+  const TAX_COLLECTOR_WALLET = process.env.DNIT_TAX_COLLECTOR_WALLET || "0x487C04EBF0c20F05009Adf9e7103644a66D1A3Ef";
+
   // 1. Deploy NationalIdentity
   const NationalIdentity = await hre.ethers.getContractFactory("NationalIdentity");
   const nationalIdentity = await NationalIdentity.deploy();
@@ -20,6 +25,19 @@ async function main() {
   await staticTaxHandler.waitForDeployment();
   const staticTaxHandlerAddress = await staticTaxHandler.getAddress();
   console.log("StaticTaxHandler deployed to:", staticTaxHandlerAddress);
+
+  // Grant role permissions for portal access (deploy-time convenience).
+  // Keeps deployer as admin (constructor) while adding your pilot wallets.
+  const adminRole = await nationalIdentity.ADMIN_ROLE();
+  const employerRole = await nationalIdentity.EMPLOYER_ROLE();
+  const taxCollectorRole = await nationalIdentity.TAX_COLLECTOR_ROLE();
+
+  await nationalIdentity.grantRole(adminRole, ADMIN_WALLET);
+  await nationalIdentity.grantRole(employerRole, EMPLOYER_WALLET);
+  await nationalIdentity.grantRole(taxCollectorRole, TAX_COLLECTOR_WALLET);
+
+  const handlerTaxCollectorRole = await staticTaxHandler.TAX_COLLECTOR_ROLE();
+  await staticTaxHandler.grantRole(handlerTaxCollectorRole, TAX_COLLECTOR_WALLET);
 
   console.log("Deployment completed successfully!");
   

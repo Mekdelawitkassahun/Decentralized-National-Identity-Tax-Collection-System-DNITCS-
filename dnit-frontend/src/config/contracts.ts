@@ -1,7 +1,7 @@
 export const CONTRACT_ADDRESSES = {
   sepolia: {
-    nationalIdentity: "0x462dC73596Fab24b5e4271f6018917504F818DbB",
-    staticTaxHandler: "0xCd9eB25254bC0EC7Df3F911E2923e591907D01B0"
+    nationalIdentity: "0xd8bc12e4257998767798431ABA22cBC69069e13e",
+    staticTaxHandler: "0x5720a110e0eceb277a289C5Bf478a0C69f0DAB08"
   },
   hardhat: {
     nationalIdentity: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
@@ -13,3 +13,11 @@ export const getContractAddress = (chainId: number, contractName: 'nationalIdent
   const network = chainId === 11155111 ? 'sepolia' : 'hardhat';
   return CONTRACT_ADDRESSES[network][contractName];
 };
+
+// Pilot role-wallets used for UI fallback when on-chain role checks fail
+// (e.g., contract addresses not updated yet, or roles not granted on Sepolia).
+export const ROLE_ADDRESSES = {
+  admin: "0x2646C40E21f8ef7637e3cD7AB6e33730Fba3C1A5",
+  employer: "0x2d06fb81C36D325c26E90a485598aA5f2d05B3dB",
+  taxCollector: "0x487C04EBF0c20F05009Adf9e7103644a66D1A3Ef",
+} as const;

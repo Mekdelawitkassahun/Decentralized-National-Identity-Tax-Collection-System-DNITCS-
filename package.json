@@ -7,6 +7,7 @@
     "install-all": "npm run contracts:install && npm run frontend:install",
     "contracts:node": "cd contracts && npx hardhat node",
     "contracts:deploy": "cd contracts && npx hardhat run scripts/deploy.cjs --network localhost",
+    "deploy:sepolia": "cd contracts && npx hardhat run scripts/deploy-sepolia.cjs --network sepolia",
     "frontend:dev": "cd dnit-frontend && npm run dev",
     "frontend:build": "cd dnit-frontend && npm run build",
     "build": "npm run frontend:build"

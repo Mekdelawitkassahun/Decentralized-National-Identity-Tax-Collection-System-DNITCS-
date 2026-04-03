@@ -26,7 +26,6 @@ const TransparencyExplorer = () => {
           // Fetch Totals
           const collected = await staticTaxHandlerContract.totalTaxCollected();
           const count = await nationalIdentityContract.getTotalCitizens();
-          const addresses = await nationalIdentityContract.getAllCitizens();
           
           setStats({ 
             totalCollected: ethers.formatEther(collected), 
@@ -37,10 +36,12 @@ const TransparencyExplorer = () => {
           const taxPaidFilter = staticTaxHandlerContract.filters.TaxPaid();
           const withholdingFilter = staticTaxHandlerContract.filters.EmployerWithholding();
           
-          // Query last 1000 blocks for activity
+          // Query recent blocks for activity (public read-only)
+          const latest = await staticTaxHandlerContract.provider.getBlockNumber();
+          const fromBlock = Math.max(0, latest - 5000);
           const [taxPaidEvents, withholdingEvents] = await Promise.all([
-            staticTaxHandlerContract.queryFilter(taxPaidFilter, -1000),
-            staticTaxHandlerContract.queryFilter(withholdingFilter, -1000)
+            staticTaxHandlerContract.queryFilter(taxPaidFilter, fromBlock, latest),
+            staticTaxHandlerContract.queryFilter(withholdingFilter, fromBlock, latest)
           ]);
 
           const allActivity = [
@@ -48,7 +49,7 @@ const TransparencyExplorer = () => {
               address: event.args[0],
               amount: ethers.formatEther(event.args[1]),
               date: 'Recently', // Simplified for now as getting block timestamp requires more calls
-              type: 'Income Tax',
+              type: 'Tax Paid',
               blockNumber: event.blockNumber
             })),
             ...withholdingEvents.map((event: any) => ({

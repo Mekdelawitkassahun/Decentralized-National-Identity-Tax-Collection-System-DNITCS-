@@ -15,7 +15,7 @@ import {
 import useWallet from './hooks/useWallet';
 
 function App() {
-  const { address, connectWallet, switchAccount, disconnectWallet, loading, isAdmin, isEmployer } = useWallet();
+  const { address, connectWallet, switchAccount, disconnectWallet, loading, isAdmin, isEmployer, isTaxCollector, isCitizen } = useWallet();
 
   const portals = [
     {
@@ -43,7 +43,7 @@ function App() {
       icon: <Landmark className="w-8 h-8 text-ethiopia-yellow" />,
       color: 'border-ethiopia-yellow/20 hover:border-ethiopia-yellow',
       link: '/tax-collector',
-      requiresRole: null
+      requiresRole: 'tax-collector'
     },
     {
       id: 'employer',
@@ -134,10 +134,14 @@ function App() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
           {portals.map((portal) => {
             const isLocked = (portal.requiresRole === 'admin' && !isAdmin) || 
-                             (portal.requiresRole === 'employer' && !isEmployer);
+                             (portal.requiresRole === 'employer' && !isEmployer) ||
+                             (portal.requiresRole === 'tax-collector' && !isTaxCollector);
+            const isCitizenPortalHiddenForPrivileged =
+              portal.id === 'citizen' && !!address && !isCitizen;
             
             // If it's a role-restricted portal and the user doesn't have that role, hide it completely
             if (portal.requiresRole && isLocked) return null;
+            if (isCitizenPortalHiddenForPrivileged) return null;
             
             return (
               <Link to={portal.link} key={portal.id}>

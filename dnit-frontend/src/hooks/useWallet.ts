@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
-import { CONTRACT_ADDRESSES, getContractAddress } from '../config/contracts';
+import { getContractAddress, ROLE_ADDRESSES } from '../config/contracts';
 
 const useWallet = () => {
   const [address, setAddress] = useState<string | null>(null);
@@ -10,6 +10,8 @@ const useWallet = () => {
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isEmployer, setIsEmployer] = useState(false);
+  const [isTaxCollector, setIsTaxCollector] = useState(false);
+  const [isCitizen, setIsCitizen] = useState(false);
   const [balance, setBalance] = useState('0');
 
   const loadABIs = async () => {
@@ -17,60 +19,68 @@ const useWallet = () => {
       const nationalIdentityABI = await fetch('/abis/NationalIdentity.json').then(res => res.json());
       const staticTaxHandlerABI = await fetch('/abis/StaticTaxHandler.json').then(res => res.json());
 
-      if (window.ethereum) {
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        const signer = await provider.getSigner();
-        const address = await signer.getAddress();
-        const bal = await provider.getBalance(address);
+      const hasMetamask = !!window.ethereum;
+      const publicRpcUrl =
+        (import.meta as any).env?.VITE_PUBLIC_RPC_URL ||
+        "https://ethereum-sepolia-rpc.publicnode.com";
 
+      const provider = hasMetamask
+        ? new ethers.BrowserProvider(window.ethereum)
+        : new ethers.JsonRpcProvider(publicRpcUrl);
+
+      const network = await provider.getNetwork();
+      const chainId = Number(network.chainId);
+
+      // Get sanitized addresses based on current network
+      const nationalIdentityAddr = ethers.getAddress(getContractAddress(chainId, 'nationalIdentity'));
+      const staticTaxHandlerAddr = ethers.getAddress(getContractAddress(chainId, 'staticTaxHandler'));
+
+      const signer = hasMetamask ? await provider.getSigner() : null;
+      const address = hasMetamask ? await signer!.getAddress() : null;
+
+      // Contract instances: read-only when no signer
+      const nationalIdentity = new ethers.Contract(
+        nationalIdentityAddr,
+        nationalIdentityABI.abi || nationalIdentityABI,
+        signer || provider
+      );
+      setNationalIdentityContract(nationalIdentity);
+
+      const staticTaxHandler = new ethers.Contract(
+        staticTaxHandlerAddr,
+        staticTaxHandlerABI.abi || staticTaxHandlerABI,
+        signer || provider
+      );
+      setStaticTaxHandlerContract(staticTaxHandler);
+
+      if (hasMetamask && address && signer) {
+        const bal = await provider.getBalance(address);
         setAddress(address);
         setSigner(signer);
         setBalance(ethers.formatEther(bal));
 
-        const network = await provider.getNetwork();
-        const chainId = Number(network.chainId);
-
-        // Get sanitized addresses based on current network
-        const nationalIdentityAddr = ethers.getAddress(getContractAddress(chainId, 'nationalIdentity'));
-        const staticTaxHandlerAddr = ethers.getAddress(getContractAddress(chainId, 'staticTaxHandler'));
-
-        const nationalIdentity = new ethers.Contract(
-          nationalIdentityAddr,
-          nationalIdentityABI.abi || nationalIdentityABI,
-          signer
-        );
-        setNationalIdentityContract(nationalIdentity);
-
-        const staticTaxHandler = new ethers.Contract(
-          staticTaxHandlerAddr,
-          staticTaxHandlerABI.abi || staticTaxHandlerABI,
-          signer
-        );
-        setStaticTaxHandlerContract(staticTaxHandler);
-
-        // Check Roles - ensure address is checksummed
+        // Role source of truth (strict wallet mapping requested by project owner):
+        // ADMIN        = 0x2646C40E21f8ef7637e3cD7AB6e33730Fba3C1A5
+        // EMPLOYER     = 0x2d06fb81C36D325c26E90a485598aA5f2d05B3dB
+        // TAX_COLLECTOR= 0x487C04EBF0c20F05009Adf9e7103644a66D1A3Ef
+        // Any other wallet is treated as a citizen UI role.
         const checksummedAddress = ethers.getAddress(address);
-        const DEFAULT_ADMIN_ROLE = "0x0000000000000000000000000000000000000000000000000000000000000000";
-        const ADMIN_ROLE = await nationalIdentity.ADMIN_ROLE();
-        const EMPLOYER_ROLE = await nationalIdentity.EMPLOYER_ROLE();
-        
-        const [isDefaultAdmin, hasAdmin, hasEmployer] = await Promise.all([
-          nationalIdentity.hasRole(DEFAULT_ADMIN_ROLE, checksummedAddress),
-          nationalIdentity.hasRole(ADMIN_ROLE, checksummedAddress),
-          nationalIdentity.hasRole(EMPLOYER_ROLE, checksummedAddress)
-        ]);
-
-        console.log("=== ROLE DIAGNOSTIC ===");
-        console.log("Current Wallet Address:", checksummedAddress);
-        console.log("Network ChainID:", chainId.toString());
-        console.log("NationalIdentity Address:", nationalIdentityAddr);
-        console.log("Has DEFAULT_ADMIN_ROLE:", isDefaultAdmin);
-        console.log("Has ADMIN_ROLE:", hasAdmin);
-        console.log("Has EMPLOYER_ROLE:", hasEmployer);
-        console.log("========================");
-
-        setIsAdmin(isDefaultAdmin || hasAdmin);
-        setIsEmployer(hasEmployer);
+        const isAdminByWallet = checksummedAddress.toLowerCase() === ROLE_ADDRESSES.admin.toLowerCase();
+        const isEmployerByWallet = checksummedAddress.toLowerCase() === ROLE_ADDRESSES.employer.toLowerCase();
+        const isTaxCollectorByWallet = checksummedAddress.toLowerCase() === ROLE_ADDRESSES.taxCollector.toLowerCase();
+        setIsAdmin(isAdminByWallet);
+        setIsEmployer(isEmployerByWallet);
+        setIsTaxCollector(isTaxCollectorByWallet);
+        setIsCitizen(!isAdminByWallet && !isEmployerByWallet && !isTaxCollectorByWallet);
+      } else {
+        // No wallet connected: public read-only mode.
+        setAddress(null);
+        setSigner(null);
+        setIsAdmin(false);
+        setIsEmployer(false);
+        setIsTaxCollector(false);
+        setIsCitizen(false);
+        setBalance('0');
       }
     } catch (error) {
       console.error("Failed to load ABIs or connect wallet:", error);
@@ -91,8 +101,13 @@ const useWallet = () => {
           setSigner(null);
           setNationalIdentityContract(null);
           setStaticTaxHandlerContract(null);
+          setIsAdmin(false);
+          setIsEmployer(false);
+          setIsTaxCollector(false);
+          setIsCitizen(false);
         }
       });
+      window.ethereum.on('chainChanged', () => loadABIs());
     }
   }, []);
 
@@ -131,6 +146,8 @@ const useWallet = () => {
     setStaticTaxHandlerContract(null);
     setIsAdmin(false);
     setIsEmployer(false);
+    setIsTaxCollector(false);
+    setIsCitizen(false);
     setBalance('0');
   };
 
@@ -144,6 +161,8 @@ const useWallet = () => {
     loading,
     isAdmin,
     isEmployer,
+    isTaxCollector,
+    isCitizen,
     balance
   };
 };
